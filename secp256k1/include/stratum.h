@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <unordered_map>
 
 class StratumClient
 {
@@ -20,6 +21,13 @@ public:
     bool submitShare(const MinerShare & share);
 
 private:
+    struct PendingShare
+    {
+        int gpuId;
+        double difficulty;
+        bool isBlockCandidate;
+    };
+
     bool connectSocket();
     void closeSocket();
     bool sendRequest(const std::string & payload);
@@ -48,6 +56,8 @@ private:
     std::string workerName;
     std::string fullUser;
     std::string readBuffer;
+    std::mutex pendingMutex;
+    std::unordered_map<int, PendingShare> pendingShares;
 };
 
 #endif // STRATUM_H

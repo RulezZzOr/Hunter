@@ -518,9 +518,111 @@ void StratumClient::handleResult(const std::string & msg, jsmntok_t * tokens, in
             std::string authResult = TokenToString(msg, resultTok);
             LOG(INFO) << "Authorize result: " << authResult;
         }
-        else if (messageId >= nextRequestId)
+        else
         {
-            LOG(INFO) << "Share submission response: " << msg;
+            PendingShare pending;
+            bool hasPending = false;
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex);
+                auto it = pendingShares.find(messageId);
+                if (it != pendingShares.end())
+                {
+                    pending = it->second;
+                    pendingShares.erase(it);
+                    hasPending = true;
+                }
+            }
+
+            if (hasPending)
+            {
+                bool accepted = false;
+                std::string resultStr = TokenToString(msg, resultTok);
+                if (resultTok.type == JSMN_PRIMITIVE)
+                {
+                    if (resultStr == "true" || resultStr == "1")
+                    {
+                        accepted = true;
+                    }
+                }
+
+                std::string errorStr;
+                bool hasError = false;
+                for (int j = 1; j < tokCount; ++j)
+                {
+                    if (TokenEquals(msg, tokens[j], "error"))
+                    {
+                        const jsmntok_t & errorTok = tokens[j + 1];
+                        errorStr = TokenToString(msg, errorTok);
+                        if (!errorStr.empty() && errorStr != "null")
+                        {
+                            hasError = true;
+                        }
+                        break;
+                    }
+                }
+
+                if (hasError) { accepted = false; }
+
+                auto now = std::chrono::system_clock::now();
+                if (info)
+                {
+                    std::lock_guard<std::mutex> statsLock(info->stats_mutex);
+                    if (pending.gpuId >= 0 && pending.gpuId < (int)info->shareStats.size())
+                    {
+                        ShareStats & stats = info->shareStats[pending.gpuId];
+                        if (accepted)
+                        {
+                            stats.accepted++;
+                            stats.lastShareDifficulty = pending.difficulty;
+                            if (pending.difficulty > stats.bestShareDifficulty)
+                            {
+                                stats.bestShareDifficulty = pending.difficulty;
+                            }
+                            stats.lastShareTime = now;
+                        }
+                        else
+                        {
+                            stats.rejected++;
+                        }
+                    }
+
+                    if (accepted)
+                    {
+                        info->totalSharesAccepted++;
+                        info->totalAcceptedDifficulty += pending.difficulty;
+                        info->lastShareTime = now;
+                        info->lastShareDifficulty = pending.difficulty;
+                        if (pending.difficulty > info->bestShareDifficulty)
+                        {
+                            info->bestShareDifficulty = pending.difficulty;
+                        }
+                    }
+                    else
+                    {
+                        info->totalSharesRejected++;
+                    }
+                }
+
+                if (accepted)
+                {
+                    LOG(INFO) << "Share accepted (GPU " << pending.gpuId
+                              << ", diff=" << pending.difficulty << ")"
+                              << (pending.isBlockCandidate? " [BLOCK]": "");
+                }
+                else
+                {
+                    if (hasError)
+                    {
+                        LOG(INFO) << "Share rejected (GPU " << pending.gpuId
+                                  << ") error=" << errorStr;
+                    }
+                    else
+                    {
+                        LOG(INFO) << "Share rejected (GPU " << pending.gpuId << ")"
+                                  << (pending.isBlockCandidate? " [BLOCK]": "");
+                    }
+                }
+            }
         }
         break;
     }
@@ -606,6 +708,8 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
             : std::string();
 
         info->info_mutex.lock();
+        LOG(INFO) << "Parsed notify jobId=" << jobId << " height=" << heightStr
+                  << " version=" << versionStr << " msgLen=" << msgHex.size();
         memset(info->stratumJobId, 0, sizeof(info->stratumJobId));
         info->stratumJobIdLen = (jobId.size() >= sizeof(info->stratumJobId))
             ? sizeof(info->stratumJobId) - 1
@@ -649,7 +753,8 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
         info->info_mutex.unlock();
 
         ++(info->blockId);
-        LOG(INFO) << "Received new stratum job " << jobId;
+        LOG(INFO) << "Received new stratum job " << jobId
+                   << " (blockId=" << info->blockId.load() << ")";
     }
     else if (method == "mining.notify" && paramsIndex < 0)
     {
@@ -706,6 +811,21 @@ bool StratumClient::submitShare(const MinerShare & share)
         << fullUser << "\",\"" << jobIdStr << "\",\"" << ex2Hex
         << "\",\"00000000\",\"" << nonceHex << "\"]}";
 
+    PendingShare pending;
+    pending.gpuId = share.gpuId;
+    pending.difficulty = (share.difficulty > 0.0)? share.difficulty: info->shareDifficulty;
+    pending.isBlockCandidate = share.isBlockCandidate;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        pendingShares[requestId] = pending;
+    }
+
     LOG(INFO) << "Submitting share nonce=" << nonceHex;
-    return sendRequest(oss.str());
+    bool sent = sendRequest(oss.str());
+    if (!sent)
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        pendingShares.erase(requestId);
+    }
+    return sent;
 }

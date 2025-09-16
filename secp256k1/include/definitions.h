@@ -15,6 +15,8 @@
 #include <atomic>
 #include <mutex>
 #include <string.h>
+#include <vector>
+#include <chrono>
 ////////////////////////////////////////////////////////////////////////////////
 //  PARAMETERS: Autolykos algorithm
 ////////////////////////////////////////////////////////////////////////////////
@@ -279,6 +281,17 @@ struct info_t
     uint32_t height = 0;
     int version = 0;
     void * stratumClient = nullptr;
+
+    // share statistics
+    std::mutex stats_mutex;
+    std::vector<ShareStats> shareStats;
+    uint64_t totalSharesFound = 0;
+    uint64_t totalSharesAccepted = 0;
+    uint64_t totalSharesRejected = 0;
+    double bestShareDifficulty = 0.0;
+    double lastShareDifficulty = 0.0;
+    double totalAcceptedDifficulty = 0.0;
+    std::chrono::system_clock::time_point lastShareTime = std::chrono::system_clock::time_point::min();
 };
 
 // json string for CURL http requests and config 
@@ -786,3 +799,23 @@ do {} while ((func) != (status))
 do {} while (((res) = (func)) != (status))
 
 #endif // DEFINITIONS_H
+struct ShareStats
+{
+    uint64_t found;
+    uint64_t accepted;
+    uint64_t rejected;
+    uint64_t stale;
+    double lastShareDifficulty;
+    double bestShareDifficulty;
+    std::chrono::system_clock::time_point lastShareTime;
+
+    ShareStats() :
+        found(0),
+        accepted(0),
+        rejected(0),
+        stale(0),
+        lastShareDifficulty(0.0),
+        bestShareDifficulty(0.0),
+        lastShareTime(std::chrono::system_clock::time_point::min())
+    {}
+};

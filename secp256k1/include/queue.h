@@ -10,16 +10,33 @@
 // all that we need to send to node/pool
 struct MinerShare
 {
-    MinerShare();
-    MinerShare(uint64_t _nonce, uint8_t *_w, uint8_t *_d)
+    MinerShare()
+    {
+        nonce = 0;
+        memset(pubkey_w, 0, sizeof(pubkey_w));
+        memset(d, 0, sizeof(d));
+        jobIdLen = 0;
+        jobId[0] = '\0';
+        extraNonce2Size = 0;
+        memset(extraNonce2, 0, sizeof(extraNonce2));
+        gpuId = -1;
+        difficulty = 0.0;
+        isBlockCandidate = false;
+    }
+    MinerShare(uint64_t _nonce, uint8_t *_w, uint8_t *_d,
+               int gpu = -1, double diff = 0.0, bool blockCandidate = false)
     {
         nonce = _nonce;
         memcpy(pubkey_w, _w, PK_SIZE_8);
         memcpy(d, _d, NUM_SIZE_8);
         jobIdLen = 0;
         extraNonce2Size = 0;
+        gpuId = gpu;
+        difficulty = diff;
+        isBlockCandidate = blockCandidate;
     }
     MinerShare(uint64_t _nonce, uint8_t *_w, uint8_t *_d,
+               int gpu, double diff, bool blockCandidate,
                const char *jobIdSrc, int jobIdLenSrc,
                const uint8_t *ex2, int ex2Size)
     {
@@ -47,6 +64,9 @@ struct MinerShare
         {
             extraNonce2Size = 0;
         }
+        gpuId = gpu;
+        difficulty = diff;
+        isBlockCandidate = blockCandidate;
     }
     uint64_t nonce;
     uint8_t pubkey_w[PK_SIZE_8];
@@ -55,6 +75,9 @@ struct MinerShare
     int jobIdLen;
     uint8_t extraNonce2[32];
     int extraNonce2Size;
+    int gpuId;
+    double difficulty;
+    bool isBlockCandidate;
 };
 
 //simple blocking queue for solutions sending

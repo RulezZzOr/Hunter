@@ -30,6 +30,8 @@
 #include <curl/curl.h>
 #include <inttypes.h>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +45,7 @@
 #include <vector>
 #include <random>
 #include <memory>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <io.h>
@@ -57,6 +60,102 @@
 INITIALIZE_EASYLOGGINGPP
 
 using namespace std::chrono;
+
+static void PrintStatus(info_t * info, const std::vector<double> & hashrates)
+{
+    if (!info) { return; }
+
+    std::vector<ShareStats> stats;
+    uint64_t totalFound = 0;
+    uint64_t totalAccepted = 0;
+    uint64_t totalRejected = 0;
+    double bestDiff = 0.0;
+    double lastDiff = 0.0;
+    double totalAcceptedDiff = 0.0;
+    std::chrono::system_clock::time_point lastShareTime = std::chrono::system_clock::time_point::min();
+
+    {
+        std::lock_guard<std::mutex> lock(info->stats_mutex);
+        stats = info->shareStats;
+        totalFound = info->totalSharesFound;
+        totalAccepted = info->totalSharesAccepted;
+        totalRejected = info->totalSharesRejected;
+        bestDiff = info->bestShareDifficulty;
+        lastDiff = info->lastShareDifficulty;
+        totalAcceptedDiff = info->totalAcceptedDifficulty;
+        lastShareTime = info->lastShareTime;
+    }
+
+    double totalHr = 0.0;
+    std::ostringstream out;
+    out << "\n ID | Hashrate (MH/s) | Shares (A/R/F) | Last Diff | Best Diff | Last Share";
+    out << "\n----+-----------------+----------------+-----------+-----------+-----------";
+
+    auto now = std::chrono::system_clock::now();
+
+    for (size_t i = 0; i < hashrates.size(); ++i)
+    {
+        double hr = hashrates[i];
+        totalHr += hr;
+        uint64_t found = (i < stats.size())? stats[i].found: 0;
+        uint64_t accepted = (i < stats.size())? stats[i].accepted: 0;
+        uint64_t rejected = (i < stats.size())? stats[i].rejected: 0;
+        double lastShareDiff = (i < stats.size())? stats[i].lastShareDifficulty: 0.0;
+        double bestShareDiff = (i < stats.size())? stats[i].bestShareDifficulty: 0.0;
+        auto gpuLastShare = (i < stats.size())? stats[i].lastShareTime: std::chrono::system_clock::time_point::min();
+
+        std::ostringstream sharesCell;
+        sharesCell << accepted << "/" << rejected << "/" << found;
+
+        std::ostringstream lastShareCell;
+        if (gpuLastShare != std::chrono::system_clock::time_point::min())
+        {
+            auto delta = std::chrono::duration_cast<std::chrono::seconds>(now - gpuLastShare).count();
+            if (delta < 0) { delta = 0; }
+            lastShareCell << delta << "s";
+        }
+        else
+        {
+            lastShareCell << "-";
+        }
+
+        out << "\n" << std::setw(3) << i << " | "
+            << std::setw(15) << std::fixed << std::setprecision(2) << hr << " | "
+            << std::setw(16) << sharesCell.str() << " | "
+            << std::setw(9) << std::setprecision(2) << lastShareDiff << " | "
+            << std::setw(9) << std::setprecision(2) << bestShareDiff << " | "
+            << std::setw(9) << lastShareCell.str();
+    }
+
+    std::ostringstream totalsShares;
+    totalsShares << totalAccepted << "/" << totalRejected << "/" << totalFound;
+
+    std::ostringstream totalsLastShare;
+    if (lastShareTime != std::chrono::system_clock::time_point::min())
+    {
+        auto delta = std::chrono::duration_cast<std::chrono::seconds>(now - lastShareTime).count();
+        if (delta < 0) { delta = 0; }
+        totalsLastShare << delta << "s";
+    }
+    else
+    {
+        totalsLastShare << "-";
+    }
+
+    double avgDiff = (totalAccepted > 0)? totalAcceptedDiff / (double)totalAccepted: 0.0;
+
+    out << "\n----+-----------------+----------------+-----------+-----------+-----------";
+    out << "\nAll | "
+        << std::setw(15) << std::fixed << std::setprecision(2) << totalHr << " | "
+        << std::setw(16) << totalsShares.str() << " | "
+        << std::setw(9) << std::setprecision(2) << lastDiff << " | "
+        << std::setw(9) << std::setprecision(2) << bestDiff << " | "
+        << std::setw(9) << totalsLastShare.str();
+
+    out << "\nAvg diff (accepted): " << std::fixed << std::setprecision(2) << avgDiff;
+
+    LOG(INFO) << out.str();
+}
 
 void SenderThread(info_t * info, BlockQueue<MinerShare>* shQueue)
 {
@@ -77,6 +176,19 @@ void SenderThread(info_t * info, BlockQueue<MinerShare>* shQueue)
                 && ((uint64_t *)r)[0] < ((uint64_t *)bound)[0]
             )
         ));
+        share.isBlockCandidate = issol;
+
+        share.difficulty = (share.difficulty > 0.0)? share.difficulty: std::max(0.0, info->shareDifficulty);
+        {
+            std::lock_guard<std::mutex> statsLock(info->stats_mutex);
+            if (share.gpuId >= 0 && share.gpuId < (int)info->shareStats.size())
+            {
+                ShareStats & stats = info->shareStats[share.gpuId];
+                stats.found++;
+            }
+            info->totalSharesFound++;
+        }
+
         PrintPuzzleSolution((uint8_t*)&share.nonce, (uint8_t*)share.d, logstr);
         if(issol)
         {        
@@ -90,6 +202,30 @@ void SenderThread(info_t * info, BlockQueue<MinerShare>* shQueue)
             else
             {
                 PostPuzzleSolution(info->to, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+                if (!info->useStratum)
+                {
+                    auto now = std::chrono::system_clock::now();
+                    std::lock_guard<std::mutex> statsLock(info->stats_mutex);
+                    if (share.gpuId >= 0 && share.gpuId < (int)info->shareStats.size())
+                    {
+                        ShareStats & stats = info->shareStats[share.gpuId];
+                        stats.accepted++;
+                        stats.lastShareDifficulty = share.difficulty;
+                        if (share.difficulty > stats.bestShareDifficulty)
+                        {
+                            stats.bestShareDifficulty = share.difficulty;
+                        }
+                        stats.lastShareTime = now;
+                    }
+                    info->totalSharesAccepted++;
+                    info->totalAcceptedDifficulty += share.difficulty;
+                    info->lastShareTime = now;
+                    info->lastShareDifficulty = share.difficulty;
+                    if (share.difficulty > info->bestShareDifficulty)
+                    {
+                        info->bestShareDifficulty = share.difficulty;
+                    }
+                }
             }
         }
         else
@@ -104,6 +240,30 @@ void SenderThread(info_t * info, BlockQueue<MinerShare>* shQueue)
             else
             {
                 PostPuzzleSolution(info->pool, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+                if (!info->useStratum)
+                {
+                    auto now = std::chrono::system_clock::now();
+                    std::lock_guard<std::mutex> statsLock(info->stats_mutex);
+                    if (share.gpuId >= 0 && share.gpuId < (int)info->shareStats.size())
+                    {
+                        ShareStats & stats = info->shareStats[share.gpuId];
+                        stats.accepted++;
+                        stats.lastShareDifficulty = share.difficulty;
+                        if (share.difficulty > stats.bestShareDifficulty)
+                        {
+                            stats.bestShareDifficulty = share.difficulty;
+                        }
+                        stats.lastShareTime = now;
+                    }
+                    info->totalSharesAccepted++;
+                    info->totalAcceptedDifficulty += share.difficulty;
+                    info->lastShareTime = now;
+                    info->lastShareDifficulty = share.difficulty;
+                    if (share.difficulty > info->bestShareDifficulty)
+                    {
+                        info->bestShareDifficulty = share.difficulty;
+                    }
+                }
             }
         }
 
@@ -155,6 +315,7 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
     int jobIdLenLocal = 0;
     uint8_t extraNonce2Template[32] = {0};
     int extraNonce2SizeLocal = 0;
+    double currentShareDiff = info->shareDifficulty;
 
     // thread info variables
     uint_t blockId = 0;
@@ -195,6 +356,7 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
         memset(extraNonce2Template, 0, sizeof(extraNonce2Template));
         memcpy(extraNonce2Template, info->extraNonce2, extraNonce2SizeLocal);
     }
+    currentShareDiff = info->shareDifficulty;
 
     info->info_mutex.unlock();
     
@@ -372,6 +534,7 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
                 memset(extraNonce2Template, 0, sizeof(extraNonce2Template));
                 memcpy(extraNonce2Template, info->extraNonce2, extraNonce2SizeLocal);
             }
+            currentShareDiff = info->shareDifficulty;
 
             info->info_mutex.unlock();
 
@@ -477,6 +640,9 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
                     *((uint64_t *)nonce),
                     w_h,
                     res_h + NUM_SIZE_32*i,
+                    deviceId,
+                    (currentShareDiff > 0.0)? currentShareDiff: info->shareDifficulty,
+                    false,
                     jobIdLocal,
                     jobIdLenLocal,
                     (ex2Size > 0)? ex2Share: nullptr,
@@ -606,6 +772,16 @@ int main(int argc, char ** argv)
 
     if (status == EXIT_FAILURE) { return EXIT_FAILURE; }
 
+    info.shareStats.clear();
+    info.shareStats.resize(deviceCount);
+    info.totalSharesFound = 0;
+    info.totalSharesAccepted = 0;
+    info.totalSharesRejected = 0;
+    info.bestShareDifficulty = 0.0;
+    info.lastShareDifficulty = 0.0;
+    info.totalAcceptedDifficulty = 0.0;
+    info.lastShareTime = std::chrono::system_clock::time_point::min();
+
     std::unique_ptr<StratumClient> stratumClient;
     if (info.useStratum)
     {
@@ -734,12 +910,10 @@ int main(int argc, char ** argv)
                     << ms.count() / (double)curltimes << " ms";
                 LOG(INFO) << "Current block candidate: " << request.ptr;
                 ms = milliseconds::zero();
-                std::stringstream hrBuffer;
-                hrBuffer << "Average hashrates: ";
-                double totalHr = 0;
-                for(int i = 0; i < deviceCount; ++i)
+                bool checkAlive = !(curlcnt % (5*curltimes));
+                if (checkAlive)
                 {
-                    if(!(curlcnt % (5*curltimes)))
+                    for(int i = 0; i < deviceCount; ++i)
                     {
                         if(lastTimestamps[i] == timestamps[i])
                         {
@@ -747,11 +921,8 @@ int main(int argc, char ** argv)
                         }
                         lastTimestamps[i] = timestamps[i];
                     }
-                    hrBuffer << "GPU" << i << " " << hashrates[i] << " MH/s ";
-                    totalHr += hashrates[i];
                 }
-                hrBuffer << "Total " << totalHr << " MH/s ";
-                LOG(INFO) << hrBuffer.str();
+                PrintStatus(&info, hashrates);
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(15));
@@ -762,16 +933,15 @@ int main(int argc, char ** argv)
         while (1)
         {
             std::this_thread::sleep_for(std::chrono::seconds(5));
-            std::stringstream hrBuffer;
-            hrBuffer << "Average hashrates: ";
-            double totalHr = 0;
             for (int i = 0; i < deviceCount; ++i)
             {
-                hrBuffer << "GPU" << i << " " << hashrates[i] << " MH/s ";
-                totalHr += hashrates[i];
+                if (lastTimestamps[i] == timestamps[i])
+                {
+                    hashrates[i] = 0;
+                }
+                lastTimestamps[i] = timestamps[i];
             }
-            hrBuffer << "Total " << totalHr << " MH/s ";
-            LOG(INFO) << hrBuffer.str();
+            PrintStatus(&info, hashrates);
         }
     }
 
