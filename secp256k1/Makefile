@@ -26,9 +26,11 @@ CFLAGS = -c --compiler-options -Wall
 CXXFLAGS = -c $(STD) --compiler-options -Wall
 COPT = -O3
 
-# find CUDA compute capability
-SMS ?= $(shell nvcc -h | tr ' ,;:' '\n' | grep -E "compute_[0-9]+" \
-	   | sed 's/compute_//' | sort -u)
+# find CUDA compute capability available in this toolkit
+SMS ?= $(strip $(shell nvcc --list-gpu-arch 2>/dev/null | grep -o 'sm_[0-9]\+' | sed 's/sm_//' | sort -n))
+ifeq ($(SMS),)
+SMS := $(CUDAARCH)
+endif
 
 ifeq ($(GENCODE_FLAGS),)
 LOWEST_SM := $(strip $(firstword $(SMS)))
