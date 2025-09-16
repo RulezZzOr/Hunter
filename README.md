@@ -28,8 +28,8 @@ a config file `autolykos/secp256k1/config.json` with stub contents.
 The default build emits native CUDA binaries for NVIDIA SM 86 (RTX 30-series such as the 3060 Ti)
 and SM 90 (RTX 50-series such as the 5090).  Adjust the `CUDAARCHS` variable in
 `autolykos/secp256k1/Makefile.in` or pass `CUDAARCHS="<space-separated SM values>"` to `make`
-if you target a different set of GPUs.  On Windows edit the `CUDA_COMPUTE_ARCHS` setting in
-`autolykos/secp256k1/winbuild.cmd`.
+if you target a different set of GPUs (for example `make CUDAARCHS="75 86"`). On Windows edit the
+`CUDA_COMPUTE_ARCHS` setting in `autolykos/secp256k1/winbuild.cmd`.
 
 ### Stratum mode
 
@@ -49,6 +49,9 @@ To mine against an Ergo stratum pool configure the miner with the following addi
 If a `stratumURL` is specified the miner opens a persistent Stratum connection (subscribe,
 authorize, difficulties, notify) and submits shares through `mining.submit`.  Legacy HTTP
 interaction with a local Ergo node remains available when `stratumURL` is omitted.
+
+If this project helps you mine more efficiently and you'd like to support further development,
+ERG/ETH tips are welcome at `0xf6d555973Ef1b5619A19b70451ae7210644A8B66`.
 
 ## Test (Linux)
 

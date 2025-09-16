@@ -27,8 +27,8 @@ CXXFLAGS = -c $(STD) --compiler-options -Wall
 COPT = -O3
 
 # find CUDA compute capability
-SMS ?= $(shell nvcc -h | grep "compute" | sed -e "s/['=, \d40\d41]/\n/g" \
-	   | grep compute | sort | uniq | cut -c 9-)
+SMS ?= $(shell nvcc -h | tr ' ,;:' '\n' | grep -E "compute_[0-9]+" \
+	   | sed 's/compute_//' | sort -u)
 
 ifeq ($(GENCODE_FLAGS),)
 LOWEST_SM := $(strip $(firstword $(SMS)))
