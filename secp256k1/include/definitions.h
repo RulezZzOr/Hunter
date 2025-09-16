@@ -261,6 +261,7 @@ struct info_t
 
     // stratum configuration/state
     bool useStratum = false;
+    bool hasMnemonic = false;
     char stratumHost[MAX_URL_SIZE];
     uint16_t stratumPort = 0;
     char stratumUser[128];

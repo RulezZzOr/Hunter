@@ -624,10 +624,20 @@ int main(int argc, char ** argv)
     }
 
     // generate public key from secret key
-    GeneratePublicKey(info.skstr, info.pkstr, info.pk);
-
-    PrintPublicKey(info.pkstr, logstr);
-    LOG(INFO) << "Generated public key:\n   " << logstr;
+    if (info.hasMnemonic)
+    {
+        GeneratePublicKey(info.skstr, info.pkstr, info.pk);
+        PrintPublicKey(info.pkstr, logstr);
+        LOG(INFO) << "Generated public key:\n   " << logstr;
+    }
+    else
+    {
+        memset(info.pk, 0, sizeof(info.pk));
+        memset(info.pkstr, 0, sizeof(info.pkstr));
+        memset(info.sk, 0, sizeof(info.sk));
+        memset(info.skstr, 0, sizeof(info.skstr));
+        LOG(INFO) << "No mnemonic configured; skipping key generation (Stratum mode).";
+    }
 
     //========================================================================//
     //  Setup CURL

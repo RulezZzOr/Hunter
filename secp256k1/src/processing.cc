@@ -124,6 +124,7 @@ int ReadConfig(
             strncat(seedstring, config.GetTokenStart(t + 1), config.GetTokenLen(t + 1));
             VLOG(1) << "Mnemonic read: " << seedstring;
             readSeed = 1;
+            if (info) { info->hasMnemonic = true; }
         }
         else if (config.jsoneq(t, "mnemonicPass") || config.jsoneq(t,"seedPass"))
         {
@@ -194,6 +195,7 @@ int ReadConfig(
         );
         free(seedstring);
         free(seedPass);
+        if (info) { info->hasMnemonic = true; }
     }
     else if( readSeed && !readSeedPass)
     {
@@ -202,6 +204,7 @@ int ReadConfig(
             skstr, ""
         );
         free(seedstring);
+        if (info) { info->hasMnemonic = true; }
     }
 
     #ifdef EMBEDDED_MNEMONIC

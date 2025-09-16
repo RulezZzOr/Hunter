@@ -451,10 +451,12 @@ void StratumClient::handleMessage(const std::string & msg)
 
     if (isNotification)
     {
+        LOG(INFO) << "Stratum <- " << msg;
         handleMethod(msg, tokens, tokCount);
     }
     else
     {
+        LOG(INFO) << "Stratum <- " << msg;
         handleResult(msg, tokens, tokCount);
     }
 }
@@ -574,25 +576,34 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
     else if (method == "mining.notify" && paramsIndex >= 0)
     {
         const jsmntok_t & paramsTok = tokens[paramsIndex];
-        if (paramsTok.type != JSMN_ARRAY || paramsTok.size < 9)
+        if (paramsTok.type != JSMN_ARRAY || paramsTok.size < 6)
         {
             LOG(ERROR) << "Unexpected notify format: " << msg;
             return;
         }
 
+        std::vector<int> elementIndex;
+        elementIndex.reserve(paramsTok.size);
         int idx = paramsIndex + 1;
-        std::string jobId = TokenToString(msg, tokens[idx]);
-        idx = NextTokenIndex(tokens, tokCount, idx);
-        std::string heightStr = TokenToString(msg, tokens[idx]);
-        idx = NextTokenIndex(tokens, tokCount, idx);
-        std::string msgHex = TokenToString(msg, tokens[idx]);
-        idx = NextTokenIndex(tokens, tokCount, idx); // skip unused
-        idx = NextTokenIndex(tokens, tokCount, idx); // skip unused
-        std::string versionStr = TokenToString(msg, tokens[idx]);
-        idx = NextTokenIndex(tokens, tokCount, idx);
-        std::string boundaryDec = TokenToString(msg, tokens[idx]);
-        idx = NextTokenIndex(tokens, tokCount, idx); // skip unused
-        idx = NextTokenIndex(tokens, tokCount, idx); // clean_jobs
+        for (int e = 0; e < paramsTok.size; ++e)
+        {
+            elementIndex.push_back(idx);
+            idx = NextTokenIndex(tokens, tokCount, idx);
+        }
+
+        std::string jobId = TokenToString(msg, tokens[elementIndex[0]]);
+        std::string heightStr = (paramsTok.size > 1)
+            ? TokenToString(msg, tokens[elementIndex[1]])
+            : std::string();
+        std::string msgHex = (paramsTok.size > 2)
+            ? TokenToString(msg, tokens[elementIndex[2]])
+            : std::string();
+        std::string versionStr = (paramsTok.size > 5)
+            ? TokenToString(msg, tokens[elementIndex[5]])
+            : std::string("0");
+        std::string boundaryDec = (paramsTok.size > 6)
+            ? TokenToString(msg, tokens[elementIndex[6]])
+            : std::string();
 
         info->info_mutex.lock();
         memset(info->stratumJobId, 0, sizeof(info->stratumJobId));
@@ -608,11 +619,21 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
         {
             msgHex = msgHex.substr(msgHex.size() - NUM_SIZE_4);
         }
+        for (char & c : msgHex) { c = (char)toupper(c); }
+        if (msgHex.size() > NUM_SIZE_4)
+        {
+            LOG(WARNING) << "Truncating Stratum msg_hex from " << msgHex.size()
+                         << " chars to " << NUM_SIZE_4;
+            msgHex = msgHex.substr(msgHex.size() - NUM_SIZE_4);
+        }
         HexStrToBigEndian(msgHex.c_str(), msgHex.size(), info->mes, NUM_SIZE_8);
 
-        char buf[NUM_SIZE_4 + 1];
-        DecStrToHexStrOf64(boundaryDec.c_str(), boundaryDec.size(), buf);
-        HexStrToLittleEndian(buf, NUM_SIZE_4, info->bound, NUM_SIZE_8);
+        if (!boundaryDec.empty())
+        {
+            char buf[NUM_SIZE_4 + 1];
+            DecStrToHexStrOf64(boundaryDec.c_str(), boundaryDec.size(), buf);
+            HexStrToLittleEndian(buf, NUM_SIZE_4, info->bound, NUM_SIZE_8);
+        }
 
         if (info->shareDifficulty > 0.0)
         {
