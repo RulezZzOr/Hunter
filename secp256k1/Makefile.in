@@ -1,5 +1,8 @@
-# CUDA architechture
-CUDAARCH = 30
+# CUDA architectures (space separated) to emit native SASS for by default
+CUDAARCHS = 86 90
+
+# Legacy single-architecture option preserved for existing tooling
+CUDAARCH = 90
 
 # CUDA maximum register usage per thread
 MAXREG = 179

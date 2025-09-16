@@ -31,19 +31,38 @@ SMS ?= $(shell nvcc -h | grep "compute" | sed -e "s/['=, \d40\d41]/\n/g" \
 	   | grep compute | sort | uniq | cut -c 9-)
 
 ifeq ($(GENCODE_FLAGS),)
-### useful ### $(foreach sm,$(SMS),\
-### useful ### $(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
-HIGHEST_SM = $(strip $(lastword $(SMS)))
+LOWEST_SM := $(strip $(firstword $(SMS)))
+HIGHEST_SM := $(strip $(lastword $(SMS)))
+REQUESTED_SM := $(strip $(if $(CUDAARCHS),$(CUDAARCHS),$(CUDAARCH)))
+SUPPORTED_SM := $(strip $(filter $(SMS),$(REQUESTED_SM)))
+UNSUPPORTED_SM := $(strip $(filter-out $(SMS),$(REQUESTED_SM)))
+
+ifneq ($(UNSUPPORTED_SM),)
+$(warning Requested CUDA architectures '$(UNSUPPORTED_SM)' are not supported by this nvcc and will be skipped)
+endif
+
+ifeq ($(SUPPORTED_SM),)
+SUPPORTED_SM := $(HIGHEST_SM)
+endif
+
+ifneq ($(strip $(SUPPORTED_SM)),)
+GENCODE_FLAGS += $(foreach sm,$(SUPPORTED_SM),-gencode arch=compute_$(sm),code=sm_$(sm))
+endif
+
 ifneq ($(HIGHEST_SM),)
-GENCODE_FLAGS += -gencode arch=compute_$(CUDAARCH),code=sm_$(CUDAARCH) \
-	-gencode arch=compute_$(HIGHEST_SM),code=compute_$(HIGHEST_SM) \
-	-gencode arch=compute_30,code=compute_30  # default arch for compatibility
+GENCODE_FLAGS += -gencode arch=compute_$(HIGHEST_SM),code=compute_$(HIGHEST_SM)
+endif
+
+ifneq ($(LOWEST_SM),)
+ifneq ($(LOWEST_SM),$(HIGHEST_SM))
+GENCODE_FLAGS += -gencode arch=compute_$(LOWEST_SM),code=compute_$(LOWEST_SM)
+endif
 endif
 endif
 
-### NOTE: code=sm_xx means cuda binary generation for xx arch, 
-### code=compute_xx - PTX generation, PTX for compute_30 is compatible 
-### with higher arches, but binary is not
+### NOTE: code=sm_xx means cuda binary generation for xx arch,
+### code=compute_xx leaves PTX that newer drivers can JIT for newer GPUs,
+### but native binaries are needed for optimal performance
 
 # lib
 AR = ar

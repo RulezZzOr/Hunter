@@ -25,6 +25,31 @@ If `make` completed successfully there will appear an executable
 `autolykos/secp256k1/auto.out` and (if not already present)
 a config file `autolykos/secp256k1/config.json` with stub contents.
 
+The default build emits native CUDA binaries for NVIDIA SM 86 (RTX 30-series such as the 3060 Ti)
+and SM 90 (RTX 50-series such as the 5090).  Adjust the `CUDAARCHS` variable in
+`autolykos/secp256k1/Makefile.in` or pass `CUDAARCHS="<space-separated SM values>"` to `make`
+if you target a different set of GPUs.  On Windows edit the `CUDA_COMPUTE_ARCHS` setting in
+`autolykos/secp256k1/winbuild.cmd`.
+
+### Stratum mode
+
+To mine against an Ergo stratum pool configure the miner with the following additional fields:
+
+```
+{
+  "mnemonic": "...",
+  "stratumURL": "stratum+tcp://pool.example.com:3333",
+  "stratumUser": "WALLET",
+  "stratumWorker": "worker1",
+  "stratumPassword": "x",
+  "keepPrehash": false
+}
+```
+
+If a `stratumURL` is specified the miner opens a persistent Stratum connection (subscribe,
+authorize, difficulties, notify) and submits shares through `mining.submit`.  Legacy HTTP
+interaction with a local Ergo node remains available when `stratumURL` is omitted.
+
 ## Test (Linux)
 
 1. Change directory to `autolykos/secp256k1`
@@ -38,7 +63,7 @@ If `make` completed successfully there will appear a test executable
 1. Install compatible pair of MS Visual Studio C++ toolchain and CUDA toolkit [compatibility table for latest CUDA toolkit](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/)
 2. Build libcurl from sources with Visual Studio toolchain [instruction](https://medium.com/@chuy.max/compile-libcurl-on-windows-with-visual-studio-2017-x64-and-ssl-winssl-cff41ac7971d)
 3. Download OpenSSL 1.0.2 [installer from slproweb.com](https://slproweb.com/download/Win64OpenSSL-1_0_2u.exe)
-4. Edit `secp256k1/buildwin.cmd` file, change `OPENSSL_DIR`, `LIBCURL_DIR` to your libcurl and OpenSSL directories, change `CUDA_COMPUTE_ARCH` to GPU code architecture you want
+4. Edit `secp256k1/buildwin.cmd` file, change `OPENSSL_DIR`, `LIBCURL_DIR` to your libcurl and OpenSSL directories, change `CUDA_COMPUTE_ARCHS` to the set of GPU architectures you want to target
 5. Find `vcvars64.bat` script, it should be in `VISUAL_STUDIO_INSTALL_DIRECTORY\VC\Auxiliary\Build`
 6. Run cmd.exe, run `vcvars64.bat` script, then change dir to secp256k1, then run `buildwin.cmd`
 7. If everything went good, `miner.exe` should appear in `secp256k1` directory 

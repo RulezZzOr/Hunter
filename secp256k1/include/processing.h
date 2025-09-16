@@ -16,7 +16,8 @@ int ReadConfig(
     char * from,
     char * to,
     char * pool,
-    int * keep
+    int * keep,
+    info_t * info
 );
 
 // print public key

@@ -258,6 +258,26 @@ struct info_t
     char pool[MAX_URL_SIZE];
     // Increment when new block is sent by node
     std::atomic<uint_t> blockId; 
+
+    // stratum configuration/state
+    bool useStratum = false;
+    char stratumHost[MAX_URL_SIZE];
+    uint16_t stratumPort = 0;
+    char stratumUser[128];
+    char stratumPassword[128];
+    char stratumWorker[128];
+    char stratumUrl[MAX_URL_SIZE];
+    char stratumJobId[64];
+    int stratumJobIdLen = 0;
+    uint8_t extraNonce1[32];
+    int extraNonce1Len = 0;
+    uint8_t extraNonce2[32];
+    int extraNonce2Size = 0;
+    std::atomic<uint64_t> extraNonce2Counter{0};
+    double shareDifficulty = 0.0;
+    uint32_t height = 0;
+    int version = 0;
+    void * stratumClient = nullptr;
 };
 
 // json string for CURL http requests and config 

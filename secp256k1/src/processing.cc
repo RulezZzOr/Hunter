@@ -32,7 +32,8 @@ int ReadConfig(
     char * from,
     char * to,
     char * pool,
-    int * keep
+    int * keep,
+    info_t * info
 )
 {
     std::ifstream file(
@@ -133,10 +134,55 @@ int ReadConfig(
 
             readSeedPass = 1;
         }
+        else if (config.jsoneq(t, "stratumURL"))
+        {
+            if (info)
+            {
+                size_t len = config.GetTokenLen(t + 1);
+                if (len >= MAX_URL_SIZE) { len = MAX_URL_SIZE - 1; }
+                memset(info->stratumUrl, 0, MAX_URL_SIZE);
+                strncpy(info->stratumUrl, config.GetTokenStart(t + 1), len);
+                info->useStratum = true;
+            }
+        }
+        else if (config.jsoneq(t, "stratumUser"))
+        {
+            if (info)
+            {
+                size_t len = config.GetTokenLen(t + 1);
+                if (len >= sizeof(info->stratumUser)) { len = sizeof(info->stratumUser) - 1; }
+                memset(info->stratumUser, 0, sizeof(info->stratumUser));
+                strncpy(info->stratumUser, config.GetTokenStart(t + 1), len);
+                info->useStratum = true;
+            }
+        }
+        else if (config.jsoneq(t, "stratumPassword"))
+        {
+            if (info)
+            {
+                size_t len = config.GetTokenLen(t + 1);
+                if (len >= sizeof(info->stratumPassword)) { len = sizeof(info->stratumPassword) - 1; }
+                memset(info->stratumPassword, 0, sizeof(info->stratumPassword));
+                strncpy(info->stratumPassword, config.GetTokenStart(t + 1), len);
+                info->useStratum = true;
+            }
+        }
+        else if (config.jsoneq(t, "stratumWorker"))
+        {
+            if (info)
+            {
+                size_t len = config.GetTokenLen(t + 1);
+                if (len >= sizeof(info->stratumWorker)) { len = sizeof(info->stratumWorker) - 1; }
+                memset(info->stratumWorker, 0, sizeof(info->stratumWorker));
+                strncpy(info->stratumWorker, config.GetTokenStart(t + 1), len);
+                info->useStratum = true;
+            }
+        }
         else
         {
             LOG(INFO) << "Unrecognized config option, currently valid options are "
-                         "\"node\", \"mnemonic\", \"mnemonicPass\" and \"keepPrehash\"";
+                         "\"node\", \"mnemonic\", \"mnemonicPass\", \"keepPrehash\","
+                         " \"stratumURL\", \"stratumUser\", \"stratumPassword\" and \"stratumWorker\"";
         }
     }
 
@@ -180,6 +226,11 @@ int ReadConfig(
 
 
 
+
+    if (info && info->useStratum)
+    {
+        return EXIT_SUCCESS;
+    }
 
     if (readSeed & readNode) { return EXIT_SUCCESS; }
     else

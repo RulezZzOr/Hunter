@@ -22,6 +22,7 @@
 #include "../include/processing.h"
 #include "../include/reduction.h"
 #include "../include/request.h"
+#include "../include/stratum.h"
 #include "../include/httpapi.h"
 #include "../include/queue.h"
 #include <ctype.h>
@@ -41,6 +42,7 @@
 #include <thread>
 #include <vector>
 #include <random>
+#include <memory>
 
 #ifdef _WIN32
 #include <io.h>
@@ -80,15 +82,31 @@ void SenderThread(info_t * info, BlockQueue<MinerShare>* shQueue)
         {        
             LOG(INFO) << "Some GPU"
             << " found and trying to POST a solution:\n" << logstr;
-            PostPuzzleSolution(info->to, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+            if (info->useStratum && info->stratumClient)
+            {
+                StratumClient * client = reinterpret_cast<StratumClient *>(info->stratumClient);
+                client->submitShare(share);
+            }
+            else
+            {
+                PostPuzzleSolution(info->to, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+            }
         }
         else
         {
             LOG(INFO) << "Some GPU"
             << " found and trying to POST a share to the pool:\n" << logstr;
-            PostPuzzleSolution(info->pool, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+            if (info->useStratum && info->stratumClient)
+            {
+                StratumClient * client = reinterpret_cast<StratumClient *>(info->stratumClient);
+                client->submitShare(share);
+            }
+            else
+            {
+                PostPuzzleSolution(info->pool, info->pkstr, share.pubkey_w, (uint8_t*)&share.nonce, share.d);
+            }
         }
-        
+
 
     }
 
@@ -133,6 +151,10 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
     char pkstr[PK_SIZE_4 + 1];
     char to[MAX_URL_SIZE];
     int keepPrehash = 0;
+    char jobIdLocal[64] = {0};
+    int jobIdLenLocal = 0;
+    uint8_t extraNonce2Template[32] = {0};
+    int extraNonce2SizeLocal = 0;
 
     // thread info variables
     uint_t blockId = 0;
@@ -153,7 +175,27 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
     memcpy(to, info->to, MAX_URL_SIZE * sizeof(char));
     // blockId = info->blockId.load();
     keepPrehash = info->keepPrehash;
-    
+    jobIdLenLocal = info->stratumJobIdLen;
+    if (jobIdLenLocal > (int)sizeof(jobIdLocal))
+    {
+        jobIdLenLocal = sizeof(jobIdLocal);
+    }
+    if (jobIdLenLocal > 0)
+    {
+        memset(jobIdLocal, 0, sizeof(jobIdLocal));
+        memcpy(jobIdLocal, info->stratumJobId, jobIdLenLocal);
+    }
+    extraNonce2SizeLocal = info->extraNonce2Size;
+    if (extraNonce2SizeLocal > (int)sizeof(extraNonce2Template))
+    {
+        extraNonce2SizeLocal = sizeof(extraNonce2Template);
+    }
+    if (extraNonce2SizeLocal > 0)
+    {
+        memset(extraNonce2Template, 0, sizeof(extraNonce2Template));
+        memcpy(extraNonce2Template, info->extraNonce2, extraNonce2SizeLocal);
+    }
+
     info->info_mutex.unlock();
     
     //========================================================================//
@@ -310,6 +352,26 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
 
             memcpy(mes_h, info->mes, NUM_SIZE_8);
             memcpy(bound_h, info->poolbound, NUM_SIZE_8);
+            jobIdLenLocal = info->stratumJobIdLen;
+            if (jobIdLenLocal > (int)sizeof(jobIdLocal))
+            {
+                jobIdLenLocal = sizeof(jobIdLocal);
+            }
+            if (jobIdLenLocal > 0)
+            {
+                memset(jobIdLocal, 0, sizeof(jobIdLocal));
+                memcpy(jobIdLocal, info->stratumJobId, jobIdLenLocal);
+            }
+            extraNonce2SizeLocal = info->extraNonce2Size;
+            if (extraNonce2SizeLocal > (int)sizeof(extraNonce2Template))
+            {
+                extraNonce2SizeLocal = sizeof(extraNonce2Template);
+            }
+            if (extraNonce2SizeLocal > 0)
+            {
+                memset(extraNonce2Template, 0, sizeof(extraNonce2Template));
+                memcpy(extraNonce2Template, info->extraNonce2, extraNonce2SizeLocal);
+            }
 
             info->info_mutex.unlock();
 
@@ -395,7 +457,31 @@ void MinerThread(int deviceId, info_t * info, std::vector<double>* hashrates, st
  
                 *((uint64_t *)nonce) = base + indices_h[i] - 1;
                 
-                MinerShare share(*((uint64_t *)nonce), w_h, res_h + NUM_SIZE_32*i);
+                uint8_t ex2Share[32] = {0};
+                int ex2Size = extraNonce2SizeLocal;
+
+                if (info->useStratum && ex2Size > 0)
+                {
+                    uint64_t seq = info->extraNonce2Counter.fetch_add(1);
+                    for (int b = 0; b < ex2Size; ++b)
+                    {
+                        ex2Share[ex2Size - 1 - b] = (seq >> (8 * b)) & 0xFF;
+                    }
+                }
+                else if (ex2Size > 0)
+                {
+                    memcpy(ex2Share, extraNonce2Template, ex2Size);
+                }
+
+                MinerShare share(
+                    *((uint64_t *)nonce),
+                    w_h,
+                    res_h + NUM_SIZE_32*i,
+                    jobIdLocal,
+                    jobIdLenLocal,
+                    (ex2Size > 0)? ex2Share: nullptr,
+                    ex2Size
+                );
                 shQueue->put(share);
                 /*
 
@@ -497,7 +583,7 @@ int main(int argc, char ** argv)
     char confName[14] = "./config.json";
     char * fileName = (argc == 1)? confName: argv[1];
     char from[MAX_URL_SIZE];
-    info_t info;
+    info_t info = {};
     info.blockId = 0;
     info.keepPrehash = 0;
     
@@ -515,13 +601,27 @@ int main(int argc, char ** argv)
 
     // read configuration from file
     status = ReadConfig(
-        fileName, info.sk, info.skstr, from, info.to, info.pool, &info.keepPrehash
+        fileName, info.sk, info.skstr, from, info.to, info.pool, &info.keepPrehash, &info
     );
 
     if (status == EXIT_FAILURE) { return EXIT_FAILURE; }
 
-    LOG(INFO) << "Block getting URL:\n   " << from;
-    LOG(INFO) << "Solution posting URL:\n   " << info.to;
+    std::unique_ptr<StratumClient> stratumClient;
+    if (info.useStratum)
+    {
+        LOG(INFO) << "Starting stratum mode with endpoint " << info.stratumUrl;
+        stratumClient.reset(new StratumClient(&info));
+        if (!stratumClient->start())
+        {
+            LOG(ERROR) << "Unable to start stratum client";
+            return EXIT_FAILURE;
+        }
+    }
+    else
+    {
+        LOG(INFO) << "Block getting URL:\n   " << from;
+        LOG(INFO) << "Solution posting URL:\n   " << info.to;
+    }
 
     // generate public key from secret key
     GeneratePublicKey(info.skstr, info.pkstr, info.pk);
@@ -563,17 +663,28 @@ int main(int argc, char ** argv)
     }
 
 
-    // get first block 
-    status = EXIT_FAILURE;
-    while(status != EXIT_SUCCESS)
+    if (!info.useStratum)
     {
-        status = GetLatestBlock(from, &request, &info, 1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(800));
-        if(status != EXIT_SUCCESS)
+        status = EXIT_FAILURE;
+        while(status != EXIT_SUCCESS)
         {
-            LOG(INFO) << "Waiting for block data to be published by node...";
+            status = GetLatestBlock(from, &request, &info, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(800));
+            if(status != EXIT_SUCCESS)
+            {
+                LOG(INFO) << "Waiting for block data to be published by node...";
+            }
         }
     }
+    else
+    {
+        LOG(INFO) << "Waiting for first job from stratum...";
+        while (info.blockId.load() == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+
     std::thread solSender(SenderThread, &info, &solQueue);
     std::thread httpApi = std::thread(HttpApiThread,&hashrates,&devinfos);    
 
@@ -589,53 +700,70 @@ int main(int argc, char ** argv)
 
     // bomb node with HTTP with 10ms intervals, if new block came 
     // signal miners with blockId
-    while (1)
+    if (!info.useStratum)
     {
-        milliseconds start = duration_cast<milliseconds>(
-            system_clock::now().time_since_epoch()
-        );
-        
-        // get latest block
-        status = GetLatestBlock(from, &request, &info, 0);
-        
-        if (status != EXIT_SUCCESS) { LOG(INFO) << "Getting block error"; }
-
-        ms += duration_cast<milliseconds>(
-            system_clock::now().time_since_epoch()
-        ) - start;
-
-        ++curlcnt;
-
-        if (!(curlcnt % curltimes))
+        while (1)
         {
-            LOG(INFO) << "Average curling time "
-                << ms.count() / (double)curltimes << " ms";
-            LOG(INFO) << "Current block candidate: " << request.ptr;
-            ms = milliseconds::zero();
+            milliseconds start = duration_cast<milliseconds>(
+                system_clock::now().time_since_epoch()
+            );
+            
+            status = GetLatestBlock(from, &request, &info, 0);
+            
+            if (status != EXIT_SUCCESS) { LOG(INFO) << "Getting block error"; }
+
+            ms += duration_cast<milliseconds>(
+                system_clock::now().time_since_epoch()
+            ) - start;
+
+            ++curlcnt;
+
+            if (!(curlcnt % curltimes))
+            {
+                LOG(INFO) << "Average curling time "
+                    << ms.count() / (double)curltimes << " ms";
+                LOG(INFO) << "Current block candidate: " << request.ptr;
+                ms = milliseconds::zero();
+                std::stringstream hrBuffer;
+                hrBuffer << "Average hashrates: ";
+                double totalHr = 0;
+                for(int i = 0; i < deviceCount; ++i)
+                {
+                    if(!(curlcnt % (5*curltimes)))
+                    {
+                        if(lastTimestamps[i] == timestamps[i])
+                        {
+                            hashrates[i] = 0;
+                        }
+                        lastTimestamps[i] = timestamps[i];
+                    }
+                    hrBuffer << "GPU" << i << " " << hashrates[i] << " MH/s ";
+                    totalHr += hashrates[i];
+                }
+                hrBuffer << "Total " << totalHr << " MH/s ";
+                LOG(INFO) << hrBuffer.str();
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        }
+    }
+    else
+    {
+        while (1)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
             std::stringstream hrBuffer;
             hrBuffer << "Average hashrates: ";
             double totalHr = 0;
-            for(int i = 0; i < deviceCount; ++i)
+            for (int i = 0; i < deviceCount; ++i)
             {
-                // check if miner thread is updating hashrate, e.g. alive
-                if(!(curlcnt % (5*curltimes)))
-                {
-                    if(lastTimestamps[i] == timestamps[i])
-                    {
-                        hashrates[i] = 0;
-                    }
-                    lastTimestamps[i] = timestamps[i];
-                }
                 hrBuffer << "GPU" << i << " " << hashrates[i] << " MH/s ";
                 totalHr += hashrates[i];
-                
             }
             hrBuffer << "Total " << totalHr << " MH/s ";
             LOG(INFO) << hrBuffer.str();
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(15));
-    }    
+    }
 
     return EXIT_SUCCESS;
 }
