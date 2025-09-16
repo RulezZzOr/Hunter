@@ -651,9 +651,9 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
         ++(info->blockId);
         LOG(INFO) << "Received new stratum job " << jobId;
     }
-    else
+    else if (method == "mining.notify" && paramsIndex < 0)
     {
-        LOG(INFO) << "Unhandled stratum message: " << msg;
+        LOG(ERROR) << "mining.notify without params";
     }
 }
 
