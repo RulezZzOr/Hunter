@@ -38,8 +38,6 @@ struct ShareStats
         , lastShareTime(std::chrono::system_clock::time_point::min())
     {}
 };
-
-#endif // DEFINITIONS_H
 ////////////////////////////////////////////////////////////////////////////////
 //  PARAMETERS: Autolykos algorithm
 ////////////////////////////////////////////////////////////////////////////////
@@ -821,7 +819,6 @@ do {} while ((func) != (status))
 #define PERSISTENT_FUNCTION_CALL_STATUS(func, status)                          \
 do {} while (((res) = (func)) != (status))
 
-#endif // DEFINITIONS_H
 struct ShareStats
 {
     uint64_t found;
@@ -842,3 +839,5 @@ struct ShareStats
         lastShareTime(std::chrono::system_clock::time_point::min())
     {}
 };
+
+#endif // DEFINITIONS_H
