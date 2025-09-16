@@ -819,25 +819,4 @@ do {} while ((func) != (status))
 #define PERSISTENT_FUNCTION_CALL_STATUS(func, status)                          \
 do {} while (((res) = (func)) != (status))
 
-struct ShareStats
-{
-    uint64_t found;
-    uint64_t accepted;
-    uint64_t rejected;
-    uint64_t stale;
-    double lastShareDifficulty;
-    double bestShareDifficulty;
-    std::chrono::system_clock::time_point lastShareTime;
-
-    ShareStats() :
-        found(0),
-        accepted(0),
-        rejected(0),
-        stale(0),
-        lastShareDifficulty(0.0),
-        bestShareDifficulty(0.0),
-        lastShareTime(std::chrono::system_clock::time_point::min())
-    {}
-};
-
 #endif // DEFINITIONS_H
