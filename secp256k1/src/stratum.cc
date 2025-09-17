@@ -3,6 +3,7 @@
 #include "../include/conversion.h"
 #include "../include/easylogging++.h"
 #include "../include/jsmn.h"
+#include "../include/stratum_helpers.h"
 
 #include <chrono>
 #include <sstream>
@@ -718,25 +719,35 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
         info->height = atoi(heightStr.c_str());
         info->version = atoi(versionStr.c_str());
 
-        for (char & c : msgHex) { c = (char)toupper(c); }
-        if (msgHex.size() > NUM_SIZE_4)
+        std::string trimmedMsg = msgHex;
+        std::transform(trimmedMsg.begin(), trimmedMsg.end(), trimmedMsg.begin(), [](unsigned char c){ return std::tolower(c); });
+        if (trimmedMsg.size() > NUM_SIZE_4)
         {
-            msgHex = msgHex.substr(msgHex.size() - NUM_SIZE_4);
+            trimmedMsg = trimmedMsg.substr(trimmedMsg.size() - NUM_SIZE_4);
         }
-        for (char & c : msgHex) { c = (char)toupper(c); }
-        if (msgHex.size() > NUM_SIZE_4)
+        std::vector<uint8_t> msgBytes = HexToBytes(trimmedMsg);
+        if (msgBytes.size() != NUM_SIZE_8)
         {
-            LOG(WARNING) << "Truncating Stratum msg_hex from " << msgHex.size()
-                         << " chars to " << NUM_SIZE_4;
-            msgHex = msgHex.substr(msgHex.size() - NUM_SIZE_4);
+            LOG(ERROR) << "Unexpected msg size " << msgBytes.size() << ", expected " << NUM_SIZE_8;
         }
-        HexStrToBigEndian(msgHex.c_str(), msgHex.size(), info->mes, NUM_SIZE_8);
+        memcpy(info->mes, msgBytes.data(), std::min(msgBytes.size(), static_cast<size_t>(NUM_SIZE_8)));
 
         if (!boundaryDec.empty())
         {
-            char buf[NUM_SIZE_4 + 1];
-            DecStrToHexStrOf64(boundaryDec.c_str(), boundaryDec.size(), buf);
-            HexStrToLittleEndian(buf, NUM_SIZE_4, info->bound, NUM_SIZE_8);
+            try
+            {
+                std::string boundaryBE = DecToUint256HexBE(boundaryDec);
+                std::string boundaryLE = BeHexToLeHex(boundaryBE);
+                std::vector<uint8_t> boundBytes = HexToBytes(boundaryLE);
+                if (boundBytes.size() == NUM_SIZE_8)
+                {
+                    memcpy(info->bound, boundBytes.data(), NUM_SIZE_8);
+                }
+            }
+            catch (const std::exception & ex)
+            {
+                LOG(ERROR) << "Failed to parse boundary: " << ex.what();
+            }
         }
 
         if (info->shareDifficulty > 0.0)
@@ -754,7 +765,9 @@ void StratumClient::handleMethod(const std::string & msg, jsmntok_t * tokens, in
 
         ++(info->blockId);
         LOG(INFO) << "Received new stratum job " << jobId
-                   << " (blockId=" << info->blockId.load() << ")";
+                   << " (blockId=" << info->blockId.load() << ")"
+                   << " boundary=" << boundaryDec
+                   << " msg=" << trimmedMsg;
     }
     else if (method == "mining.notify" && paramsIndex < 0)
     {
@@ -829,3 +842,4 @@ bool StratumClient::submitShare(const MinerShare & share)
     }
     return sent;
 }
+#include <boost/multiprecision/cpp_int.hpp>

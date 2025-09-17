@@ -774,6 +774,10 @@ int main(int argc, char ** argv)
 
     info.shareStats.clear();
     info.shareStats.resize(deviceCount);
+    for (auto & stats : info.shareStats)
+    {
+        stats = ShareStats();
+    }
     info.totalSharesFound = 0;
     info.totalSharesAccepted = 0;
     info.totalSharesRejected = 0;
